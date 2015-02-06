@@ -156,29 +156,29 @@ int main(void)
 				LEDs_TurnOnLEDs(LEDMASK_TX);
 				PulseMSRemaining.TxLEDPulse = TX_RX_LED_PULSE_MS;
 
-			Endpoint_SelectEndpoint(VirtualSerial_CDC_Interface.Config.DataINEndpoint.Address);
-			/* Check if a packet is already enqueued to the host - if so, we shouldn't try to send more data
-			 * until it completes as there is a chance nothing is listening and a lengthy timeout could occur */
-			if (Endpoint_IsINReady())
-			{
-				/* Never send more than one bank size less one byte to the host at a time, so that we don't block
-				 * while a Zero Length Packet (ZLP) to terminate the transfer is sent if the host isn't listening */
-				uint8_t BytesToSend = MIN(BufferCount, (CDC_TXRX_EPSIZE - 1));
-
-				/* Read bytes from the USART receive buffer into the USB IN endpoint */
-				while (BytesToSend--)
+				Endpoint_SelectEndpoint(VirtualSerial_CDC_Interface.Config.DataINEndpoint.Address);
+				/* Check if a packet is already enqueued to the host - if so, we shouldn't try to send more data
+				 * until it completes as there is a chance nothing is listening and a lengthy timeout could occur */
+				if (Endpoint_IsINReady())
 				{
-					/* Try to send the next byte of data to the host, abort if there is an error without dequeuing */
-					if (CDC_Device_SendByte(&VirtualSerial_CDC_Interface,
-											RingBuffer_Peek(&USARTtoUSB_Buffer)) != ENDPOINT_READYWAIT_NoError)
-					{
-						break;
-					}
+					/* Never send more than one bank size less one byte to the host at a time, so that we don't block
+					 * while a Zero Length Packet (ZLP) to terminate the transfer is sent if the host isn't listening */
+					uint8_t BytesToSend = MIN(BufferCount, (CDC_TXRX_EPSIZE - 1));
 
-					/* Dequeue the already sent byte from the buffer now we have confirmed that no transmission error occurred */
-					RingBuffer_Remove(&USARTtoUSB_Buffer);
+					/* Read bytes from the USART receive buffer into the USB IN endpoint */
+					while (BytesToSend--)
+					{
+						/* Try to send the next byte of data to the host, abort if there is an error without dequeuing */
+						if (CDC_Device_SendByte(&VirtualSerial_CDC_Interface,
+												RingBuffer_Peek(&USARTtoUSB_Buffer)) != ENDPOINT_READYWAIT_NoError)
+						{
+							break;
+						}
+
+						/* Dequeue the already sent byte from the buffer now we have confirmed that no transmission error occurred */
+						RingBuffer_Remove(&USARTtoUSB_Buffer);
+					}
 				}
-			}
 			}
 			// Turn off TX LED(s) once the TX pulse period has elapsed
 			if (PulseMSRemaining.TxLEDPulse && !(--PulseMSRemaining.TxLEDPulse))
