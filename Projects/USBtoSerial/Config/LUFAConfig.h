@@ -79,7 +79,7 @@
 //		#define NO_DEVICE_SELF_POWER
 
 		/* USB Host Mode Driver Related Tokens: */
-//		#define HOST_STATE_AS_GPIOR              0
+		#define HOST_STATE_AS_GPIOR              0
 //		#define USB_HOST_TIMEOUT_MS              {Insert Value Here}
 //		#define HOST_DEVICE_SETTLE_DELAY_MS	     {Insert Value Here}
 //		#define NO_AUTO_VBUS_MANAGEMENT

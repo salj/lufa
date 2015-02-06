@@ -11,17 +11,25 @@
 
 # Run "make help" for target help.
 
-MCU          = at90usb1287
+MCU          = atmega16u2
 ARCH         = AVR8
-BOARD        = USBKEY
-F_CPU        = 8000000
+BOARD        = USER
+F_CPU        = 16000000
 F_USB        = $(F_CPU)
-OPTIMIZATION = s
+OPTIMIZATION = 3
 TARGET       = USBtoSerial
 SRC          = $(TARGET).c Descriptors.c $(LUFA_SRC_USB) $(LUFA_SRC_USBCLASS)
 LUFA_PATH    = ../../LUFA
 CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/
 LD_FLAGS     =
+
+CC_FLAGS += -DAVR_RESET_LINE_PORT="PORTC"
+CC_FLAGS += -DAVR_RESET_LINE_DDR="DDRC"
+CC_FLAGS += -DAVR_RESET_LINE_MASK="(1 << 7)"
+CC_FLAGS += -DAVR_ERASE_LINE_PORT="PORTC"
+CC_FLAGS += -DAVR_ERASE_LINE_DDR="DDRC"
+CC_FLAGS += -DAVR_ERASE_LINE_MASK="(1 << 6)"
+CC_FLAGS += -DTX_RX_LED_PULSE_MS=2
 
 # Default target
 all:

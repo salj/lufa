@@ -48,6 +48,13 @@ static RingBuffer_t USARTtoUSB_Buffer;
 /** Underlying data buffer for \ref USARTtoUSB_Buffer, where the stored bytes are located. */
 static uint8_t      USARTtoUSB_Buffer_Data[128];
 
+/** Pulse generation counters to keep track of the number of milliseconds remaining for each pulse type */
+volatile struct
+{
+	uint8_t TxLEDPulse; /**< Milliseconds remaining for data Tx LED pulse */
+	uint8_t RxLEDPulse; /**< Milliseconds remaining for data Rx LED pulse */
+} PulseMSRemaining;
+
 /** LUFA CDC Class driver interface configuration and state information. This structure is
  *  passed to all CDC Class driver functions, so that multiple instances of the same class
  *  within a device can be differentiated from one another.
@@ -79,6 +86,42 @@ USB_ClassInfo_CDC_Device_t VirtualSerial_CDC_Interface =
 	};
 
 
+int ResetTimer = 0;
+long baud = 0;
+/*
+bool CurrentDTRState = false;
+bool PreviousDTRState = false;
+bool CurrentRTSState = false;
+bool PreviousRTSState = false;
+*/
+bool Selected1200BPS = false;
+
+void setResetPin(bool v) {
+	/* Target /RESET line  */
+	if (v) {
+		/* ACTIVE   => OUTPUT LOW (0v on target /RESET) */
+		AVR_RESET_LINE_DDR  |= AVR_RESET_LINE_MASK;
+		AVR_RESET_LINE_PORT &= ~AVR_RESET_LINE_MASK;
+		//LEDs_TurnOnLEDs(LEDMASK_RX);
+	} else {
+	 	/* INACTIVE => set as INPUT (internal pullup on target /RESET keep it at 3.3v) */
+		AVR_RESET_LINE_DDR  &= ~AVR_RESET_LINE_MASK;
+		AVR_RESET_LINE_PORT &= ~AVR_RESET_LINE_MASK;
+		//LEDs_TurnOffLEDs(LEDMASK_RX);
+	}
+}
+
+void setErasePin(bool v) {
+	if (v) {
+		AVR_ERASE_LINE_PORT &= ~AVR_ERASE_LINE_MASK;
+		//LEDs_TurnOnLEDs(LEDMASK_TX);
+	} else {
+		AVR_ERASE_LINE_PORT |= AVR_ERASE_LINE_MASK;
+		//LEDs_TurnOffLEDs(LEDMASK_TX);
+	}
+}
+
+
 /** Main program entry point. This routine contains the overall program flow, including initial
  *  setup of all components and the main program loop.
  */
@@ -105,10 +148,15 @@ int main(void)
 		}
 
 		uint16_t BufferCount = RingBuffer_GetCount(&USARTtoUSB_Buffer);
-		if (BufferCount)
+		if ((TIFR0 & (1 << TOV0)) || (BufferCount > 96))
 		{
-			Endpoint_SelectEndpoint(VirtualSerial_CDC_Interface.Config.DataINEndpoint.Address);
+			TIFR0 |= (1 << TOV0);
 
+			if (BufferCount) {
+				LEDs_TurnOnLEDs(LEDMASK_TX);
+				PulseMSRemaining.TxLEDPulse = TX_RX_LED_PULSE_MS;
+
+			Endpoint_SelectEndpoint(VirtualSerial_CDC_Interface.Config.DataINEndpoint.Address);
 			/* Check if a packet is already enqueued to the host - if so, we shouldn't try to send more data
 			 * until it completes as there is a chance nothing is listening and a lengthy timeout could occur */
 			if (Endpoint_IsINReady())
@@ -131,11 +179,45 @@ int main(void)
 					RingBuffer_Remove(&USARTtoUSB_Buffer);
 				}
 			}
+			}
+			// Turn off TX LED(s) once the TX pulse period has elapsed
+			if (PulseMSRemaining.TxLEDPulse && !(--PulseMSRemaining.TxLEDPulse))
+			  LEDs_TurnOffLEDs(LEDMASK_TX);
+
+			// Turn off RX LED(s) once the RX pulse period has elapsed
+			if (PulseMSRemaining.RxLEDPulse && !(--PulseMSRemaining.RxLEDPulse))
+			  LEDs_TurnOffLEDs(LEDMASK_RX);
+
+			if (ResetTimer > 0)
+			{
+				// SAM3X RESET/ERASE Sequence
+				// --------------------------
+				// Between 60 and 120: do erase
+				if (ResetTimer >= 60 && ResetTimer <= 120) {
+					setErasePin(true);
+				} else {
+					setErasePin(false);
+				}
+
+				// Between 1 and 50: do reset
+				if (ResetTimer >= 1 && ResetTimer <= 50) {
+					setResetPin(true);
+				} else {
+					setResetPin(false);
+				}
+				ResetTimer--;
+			} else {
+				setErasePin(false);
+				setResetPin(false);
+			}
 		}
 
 		/* Load the next byte from the USART transmit buffer into the USART if transmit buffer space is available */
-		if (Serial_IsSendReady() && !(RingBuffer_IsEmpty(&USBtoUSART_Buffer)))
+		if (Serial_IsSendReady() && !(RingBuffer_IsEmpty(&USBtoUSART_Buffer))){
 		  Serial_SendByte(RingBuffer_Remove(&USBtoUSART_Buffer));
+    	  LEDs_TurnOnLEDs(LEDMASK_RX);
+		  PulseMSRemaining.RxLEDPulse = TX_RX_LED_PULSE_MS;
+        }
 
 		CDC_Device_USBTask(&VirtualSerial_CDC_Interface);
 		USB_USBTask();
@@ -154,22 +236,32 @@ void SetupHardware(void)
 	clock_prescale_set(clock_div_1);
 #endif
 
+	setResetPin(false);
+	/* Target /ERASE line is active HIGH: there is a mosfet that inverts logic */
+	AVR_ERASE_LINE_PORT |= AVR_ERASE_LINE_MASK;
+	AVR_ERASE_LINE_DDR  |= AVR_ERASE_LINE_MASK;	
+
 	/* Hardware Initialization */
 	LEDs_Init();
 	USB_Init();
+
+	/* Start the flush timer so that overflows occur rapidly to push received bytes to the USB interface */
+	TCCR0B = (1 << CS02);
 }
 
-/** Event handler for the library USB Connection event. */
+/** Event handler for the library USB Connection event.
 void EVENT_USB_Device_Connect(void)
 {
 	LEDs_SetAllLEDs(LEDMASK_USB_ENUMERATING);
 }
+*/
 
-/** Event handler for the library USB Disconnection event. */
+/** Event handler for the library USB Disconnection event.
 void EVENT_USB_Device_Disconnect(void)
 {
 	LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
 }
+*/
 
 /** Event handler for the library USB Configuration Changed event. */
 void EVENT_USB_Device_ConfigurationChanged(void)
@@ -178,7 +270,7 @@ void EVENT_USB_Device_ConfigurationChanged(void)
 
 	ConfigSuccess &= CDC_Device_ConfigureEndpoints(&VirtualSerial_CDC_Interface);
 
-	LEDs_SetAllLEDs(ConfigSuccess ? LEDMASK_USB_READY : LEDMASK_USB_ERROR);
+//	LEDs_SetAllLEDs(ConfigSuccess ? LEDMASK_USB_READY : LEDMASK_USB_ERROR);
 }
 
 /** Event handler for the library USB Control Request reception event. */
@@ -241,8 +333,10 @@ void EVENT_CDC_Device_LineEncodingChanged(USB_ClassInfo_CDC_Device_t* const CDCI
 	UCSR1C = 0;
 
 	/* Set the new baud rate before configuring the USART */
-	UBRR1  = SERIAL_2X_UBBRVAL(CDCInterfaceInfo->State.LineEncoding.BaudRateBPS);
-
+    baud = CDCInterfaceInfo->State.LineEncoding.BaudRateBPS;
+	Selected1200BPS = (baud == 1200);
+    UBRR1 = SERIAL_2X_UBBRVAL(baud);
+    
 	/* Reconfigure the USART in double speed mode for a wider baud rate range at the expense of accuracy */
 	UCSR1C = ConfigMask;
 	UCSR1A = (1 << U2X1);
@@ -252,3 +346,23 @@ void EVENT_CDC_Device_LineEncodingChanged(USB_ClassInfo_CDC_Device_t* const CDCI
 	PORTD &= ~(1 << 3);
 }
 
+/** Event handler for the CDC Class driver Host-to-Device Line Encoding Changed event.
+ *
+ *  \param[in] CDCInterfaceInfo  Pointer to the CDC class interface configuration structure being referenced
+ */
+void EVENT_CDC_Device_ControLineStateChanged(USB_ClassInfo_CDC_Device_t* const CDCInterfaceInfo)
+{
+/*	PreviousDTRState = CurrentDTRState;
+	PreviousRTSState = CurrentRTSState;
+	CurrentDTRState = (CDCInterfaceInfo->State.ControlLineStates.HostToDevice & CDC_CONTROL_LINE_OUT_DTR);
+	CurrentRTSState = (CDCInterfaceInfo->State.ControlLineStates.HostToDevice & CDC_CONTROL_LINE_OUT_RTS);
+*/
+
+	if (Selected1200BPS) {
+		/* Start Erase / Reset procedure when receiving the magic "1200" baudrate */
+		ResetTimer = 120;
+	}/* else if (!PreviousDTRState && CurrentDTRState) {
+		// Reset on rising edge of DTR
+		ResetTimer = 50;
+	}*/
+}
